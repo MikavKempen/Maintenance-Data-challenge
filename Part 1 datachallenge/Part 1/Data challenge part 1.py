@@ -31,6 +31,17 @@ damage_cols = [col for col in df.columns if "Damage" in col]
 ## Count damages per month (non-empty entries)
 num_damages = df[damage_cols].apply(pd.to_numeric, errors='coerce').notna().sum(axis=1)
 
+## Histogram of number of damages per month
+df["YearMonth"] = df["Year"].astype(str) + "-" + df["Month"].astype(str)
+
+plt.figure(figsize=(12,6))
+plt.bar(df["YearMonth"], num_damages, color="skyblue", edgecolor="black")
+plt.xticks(rotation=45)
+plt.ylabel("Number of Damages")
+plt.title("Number of Damages per Month-Year")
+plt.tight_layout()
+plt.show()
+
 ## Average monthly damages
 X_bar = num_damages.mean()
 
@@ -72,12 +83,8 @@ ecl = 1 # month
 c_rep = (lambda_hat * days_in_month) * (p_moderate * c_moderate + p_major * c_major)
 
 ## Checking if it's even possible to cross the threshold
-
 ### Compute total severity per month (sum across all damage columns)
 monthly_total_severity = df[damage_cols].apply(pd.to_numeric, errors="coerce").sum(axis=1)
-
-### Add Year-Month labels for x-axis
-df["YearMonth"] = df["Year"].astype(str) + "-" + df["Month"].astype(str)
 
 plt.figure(figsize=(12,6))
 plt.plot(df["YearMonth"], monthly_total_severity, marker="o", label="Total Severity per Month")
@@ -87,7 +94,7 @@ plt.ylabel("Total Severity Score")
 plt.title("Monthly Total Severity vs Safety Threshold")
 plt.legend()
 plt.tight_layout()
-#plt.show()
+plt.show()
 
 ## Count months exceeding the threshold. Use data-driven approach to determine the probability of crossing the threshold.
 ## This is acceptable because we have quite a big dataset and the event is not super likely as was seen in the graph.
