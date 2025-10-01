@@ -61,13 +61,17 @@ print(f"95% CI: [{ci_low}, {ci_high}]") # = 95% CI: [0.059806978704476044, 0.084
 all_severities = df[damage_cols].apply(pd.to_numeric, errors='coerce').values.flatten()
 all_severities = pd.Series(all_severities).dropna()
 
+## Making sure there are no errors/typos
+print(all_severities.unique())
+
 ## Count each severity type
 minor_count = (all_severities == 0.1).sum()
 moderate_count = (all_severities == 1).sum()
 major_count = (all_severities == 10).sum()
 total_count = len(all_severities)
 
-## Probabilities. The probability of arrival is the same as the empirical probability since the arrivals and severities are i.i.d.
+## Calculating the probabilities. The probability of arrival is the same as the empirical
+## probability since the arrivals and severities are i.i.d. Also check hand calculations
 p_minor = minor_count / total_count
 p_moderate = moderate_count / total_count
 p_major = major_count / total_count
@@ -76,16 +80,18 @@ print(f"Probability of minor damage: {p_minor:.3f}") # 51.5%
 print(f"Probability of moderate damage: {p_moderate:.3f}") # 33.8%
 print(f"Probability of major damage: {p_major:.3f}") # 14.6%
 
-# Task c
-ecl = 1 # month
+# task c (data-driven)
+ecl = 1  # month
 
 ## Expected repair cost per cycle
-c_rep = (lambda_hat * days_in_month) * (p_moderate * c_moderate + p_major * c_major)
+mu = lambda_hat * days_in_month  # estimated mean damages per month
+E_repair_per_damage = p_moderate * c_moderate + p_major * c_major + p_minor * c_minor#c_minor is 0 so it will eliminate itself
+c_rep = mu * E_repair_per_damage
 
-## Checking if it's even possible to cross the threshold
-### Compute total severity per month (sum across all damage columns)
+## Total severity per month
 monthly_total_severity = df[damage_cols].apply(pd.to_numeric, errors="coerce").sum(axis=1)
 
+## Checking if it's even possible to cross the threshold
 plt.figure(figsize=(12,6))
 plt.plot(df["YearMonth"], monthly_total_severity, marker="o", label="Total Severity per Month")
 plt.axhline(y=penalty_threshold, color="r", linestyle="--", label=f"Threshold = {penalty_threshold}")
@@ -96,88 +102,152 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-## Count months exceeding the threshold. Use data-driven approach to determine the probability of crossing the threshold.
-## This is acceptable because we have quite a big dataset and the event is not super likely as was seen in the graph.
-months_over_threshold = (monthly_total_severity > penalty_threshold).sum()
-total_months = len(monthly_total_severity)
-percentage_over_threshold = 100 * months_over_threshold / total_months
+## Data-driven penalty probability
+months_over_threshold = (monthly_total_severity > penalty_threshold).sum() # 2
+total_months = len(monthly_total_severity)# 60
+p_penalty_data = months_over_threshold / total_months
 
-print(f"Months over threshold: {months_over_threshold} / {total_months}")
-print(f"Percentage of months over threshold: {percentage_over_threshold:.2f}%")
+## Expected penalty cost
+c_penalty_data = penalty * p_penalty_data
 
-# Expected penalty cost per cycle (thousands of euros)
-p_penalty = percentage_over_threshold/100 # Conclusion from the data
-c_fine = penalty * p_penalty
+## Expected monthly cost
+ecc_data = c_i + c_rep + c_penalty_data
+g_data = ecc_data / ecl
 
-# Expected cycle cost (thousands of euros)
-ecc = c_i + c_rep + c_fine
+print("\n--- Task C (data-driven) ---")
+print(f"Empirical penalty probability = {p_penalty_data:.4f} ({p_penalty_data*100:.2f}%)")# Empirical penalty probability = 3.33%
+print(f"Expected monthly maintenance cost (data-driven) = {g_data:.2f} thousand euros")# Expected monthly maintenance cost = 30.57 thousand euros
 
-# Expected monthly cost (since cycle length = 1 month)
-g = ecc / ecl
+# task c (theory-based)
+## Reusable theory-based probability of penalty function
+def penalty_probability(mu, threshold=20, p_minor=p_minor, p_moderate=p_moderate, p_major=p_major):
+    # Conservative truncation of Poisson distribution
+    n_max = int(math.ceil(mu + 10 * math.sqrt(max(mu, 1.0))))
+    p_penalty_theory = 0.0
 
-print(f"Expected monthly maintenance cost: {g:.2f} thousand euros") # 30.57 thousand euros
+    for n in range(0, n_max + 1):
+        pN = math.exp(-mu) * (mu ** n) / math.factorial(n)
+        if n == 0:
+            Pr_gt = 0.0
+        else:
+            Pr_le = 0.0
+            # enumerate possible (k minors, m moderates, q majors)
+            for q in range(0, n + 1):
+                for m in range(0, n - q + 1):
+                    k = n - m - q
+                    total_sev = 0.1 * k + 1.0 * m + 10.0 * q
+                    if total_sev <= threshold + 1e-12:
+                        coeff = math.factorial(n) / (
+                            math.factorial(k) * math.factorial(m) * math.factorial(q)
+                        )
+                        Pr_le += coeff * (p_minor ** k) * (p_moderate ** m) * (p_major ** q)
+            Pr_gt = 1.0 - Pr_le
+        p_penalty_theory += pN * Pr_gt
 
-# task d
-## Define a range of tau values (days)
-tau_values = np.arange(5, 365/2+1, 1)  # from 5 days to 6 months (182.5 days). Steps of 1 day
+    return p_penalty_theory
 
-## Expected repair cost per damage
-E_repair_per_damage = p_moderate * c_moderate + p_major * c_major
+## Call the reusable function
+p_penalty_theory = penalty_probability(mu, threshold=penalty_threshold)
 
-monthly_costs = []
+## Expected penalty cost (theory-based)
+c_penalty_theory = penalty * p_penalty_theory
+
+## Expected monthly cost (theory-based)
+ecc_theory = c_i + c_rep + c_penalty_theory
+g_theory = ecc_theory / ecl
+
+print("\n--- Task C (theory-based) ---")
+print(f"Theoretical penalty probability = {p_penalty_theory:.4f} ({p_penalty_theory*100:.2f}%)")
+print(f"Expected monthly maintenance cost (theory-based) = {g_theory:.2f} thousand euros")
+
+# task d (data-driven)
+## Candidate inspection intervals (days)
+tau_values = np.arange(5, int(365/2) + 1, 1) # Start at 5 days, check every day for 365/2 days to make sure
+                                          # we can have at least 2 inspections per day
+monthly_costs_data = []
 for tau in tau_values:
-    ### Expected repair cost per cycle
-    c_rep_tau = (lambda_hat * tau) * E_repair_per_damage
+    cycle_costs = []
+    cycle_length_months = max(1, int(round(tau / 30))) # make sure it's at least 30 to allow for computation so minimum tau is 30 days
+    ## Split dataset into cycles of tau days
+    for start in range(0, len(df), cycle_length_months):
+        cycle = df.iloc[start:start + cycle_length_months]
+        if cycle.empty:
+            continue
 
-    ### Approximate penalty probability: scale linearly with tau
-    p_penalty_tau = min(1.0, p_penalty * tau / days_in_month)
+        ## Inspection cost
+        cost = c_i
+
+        # Repair cost (from actual data)
+        damages = cycle[damage_cols].apply(pd.to_numeric, errors="coerce").values.flatten()
+        damages = pd.Series(damages).dropna()
+        cost += (damages == 1).sum() * c_moderate
+        cost += (damages == 10).sum() * c_major
+
+        # Penalty
+        total_severity = cycle[damage_cols].apply(pd.to_numeric, errors="coerce").sum().sum()
+        if total_severity > penalty_threshold:
+            cost += penalty
+
+        cycle_costs.append(cost)
+
+    if len(cycle_costs) > 0:
+        # normalize cost to monthly
+        g_tau_data = np.mean(cycle_costs) / tau * 30
+        monthly_costs_data.append(g_tau_data)
+    else:
+        monthly_costs_data.append(np.nan)
+
+## Find τ* that minimizes the expected monthly cost (data-driven)
+monthly_costs_array = np.array(monthly_costs_data)
+min_index_data = np.nanargmin(monthly_costs_array)
+tau_star_data = tau_values[min_index_data]
+min_cost_data = monthly_costs_array[min_index_data]
+
+print("\n--- Task D (data-driven) ---")
+print(f"Optimal inspection interval tau* (data-driven) = {tau_star_data:.1f} days")
+print(f"Expected monthly cost at tau* = {min_cost_data:.2f} thousand euros")
+
+# task d (theory-based)
+monthly_costs_theory = []
+for tau in tau_values:
+    variable_mu = lambda_hat * tau
+
+    # Repair cost
+    c_rep_tau = variable_mu * E_repair_per_damage
+
+    # Penalty probability
+    p_penalty_tau = penalty_probability(variable_mu, penalty_threshold)
     c_fine_tau = penalty * p_penalty_tau
 
-    ### Expected cycle cost
+    # Expected cycle cost
     ecc_tau = c_i + c_rep_tau + c_fine_tau
 
-    ### Expected monthly cost (per 30 days)
+    # Monthly cost
     g_tau = ecc_tau / tau * 30
-    monthly_costs.append(g_tau)
+    monthly_costs_theory.append(g_tau)
 
-## Find tau that minimizes expected monthly cost
-min_index = np.argmin(monthly_costs)
-tau_star = tau_values[min_index]
-min_cost = monthly_costs[min_index]
+## Convert list to array for easier handling
+monthly_costs_theory_array = np.array(monthly_costs_theory)
 
-print(f"Optimal inspection interval tau* = {tau_star:.1f} days")
-print(f"Expected monthly cost at tau* = {min_cost:.2f} thousand euros")
+## Find τ* that minimizes the expected monthly cost (theory-based)
+min_index_theory = np.nanargmin(monthly_costs_theory_array)
+tau_star_theory = tau_values[min_index_theory]
+min_cost_theory = monthly_costs_theory_array[min_index_theory]
 
-# Plot expected monthly cost over tau values
-plt.figure(figsize=(10,5))
-plt.plot(tau_values, monthly_costs, marker='o')
-plt.axvline(x=tau_star, color='r', linestyle='--', label=f"Optimal tau* = {tau_star:.1f} days")
-plt.xlabel("Inspection interval τ (days)")
-plt.ylabel("Expected monthly maintenance cost (thousand €)")
-plt.title("Expected monthly maintenance cost vs inspection interval")
-plt.legend()
-plt.grid(True)
-plt.show()
+print("\n--- Task D (theory-based) ---")
+print(f"Optimal inspection interval tau* (theory-based) = {tau_star_theory:.1f} days")
+print(f"Expected monthly cost at tau* = {min_cost_theory:.2f} thousand euros")
 
-
-
-#d with taking r into account
-# ===== Task (d): Optimal τ using Monte Carlo penalty probability (no linear approx) =====
-
-# Search grid for inspection interval τ (respect "at least twice/year" → τ ≤ 182 days)
-tau_values = np.arange(5, int(365/2) + 1, 1)
-
-# Expected repair cost per damage (from Task b)
-E_repair_per_damage = p_moderate * c_moderate + p_major * c_major
-
-# Monte Carlo settings
+# task d with Monte Carlo penalty probability
+## Monte Carlo settings
 n_mc = 2000                              # number of simulated cycles per τ (increase for smoother results)
 rng = np.random.default_rng(42)           # reproducible random generator
 
-# Severity categories (values) and their probabilities (from Task b)
+## Severity categories (values) and their probabilities (in arrays for ease)
 severity_values = np.array([0.1, 1.0, 10.0])
 severity_probs  = np.array([p_minor, p_moderate, p_major])
 
+## Estimate the probability of a penalty using Monte Carlo simulation
 def estimate_penalty_prob_tau(tau, n_mc=20000):
     """
     Estimate P(sum of severities in a τ-day cycle > penalty_threshold)
@@ -185,7 +255,7 @@ def estimate_penalty_prob_tau(tau, n_mc=20000):
       N(τ) ~ Poisson(lambda_hat * τ), severities i.i.d. in {0.1, 1, 10}.
     """
     lam_tau = lambda_hat * tau
-    # Draw number of damages per cycle for all simulations
+    ### Draw number of damages per cycle for all simulations
     Ns = rng.poisson(lam_tau, size=n_mc)
 
     exceed = 0
@@ -198,7 +268,7 @@ def estimate_penalty_prob_tau(tau, n_mc=20000):
             exceed += 1
     return exceed / n_mc
 
-# Compute expected monthly cost for each τ
+## Compute expected monthly cost for each τ
 monthly_costs = []
 penalty_probs = []  # store Monte Carlo Pτ for diagnostics/plotting
 for tau in tau_values:
@@ -215,27 +285,19 @@ for tau in tau_values:
     g_tau = ecc_tau / tau * 30
     monthly_costs.append(g_tau)
 
-# Find τ* that minimizes the expected monthly cost
-min_index = np.argmin(monthly_costs)
-tau_star = tau_values[min_index]
-min_cost = monthly_costs[min_index]
+## Convert list to array for easier handling
+monthly_costs_mc_array = np.array(monthly_costs)
 
-print(f"Optimal inspection interval tau* = {tau_star:.1f} days")
-print(f"Expected monthly cost at tau* = {min_cost:.2f} thousand euros")
+## Find τ* that minimizes the expected monthly cost (Monte Carlo)
+min_index_mc = np.nanargmin(monthly_costs_mc_array)
+tau_star_mc = tau_values[min_index_mc]
+min_cost_mc = monthly_costs_mc_array[min_index_mc]
 
-# Plot: Expected monthly cost vs τ (Monte Carlo only)
-plt.figure(figsize=(10,5))
-plt.plot(tau_values, monthly_costs, marker='o', linewidth=1, label="Cost (MC penalty)")
-plt.axvline(x=tau_star, color='r', linestyle='--', label=f"tau* = {tau_star:.1f} d")
-plt.xlabel("Inspection interval τ (days)")
-plt.ylabel("Expected monthly maintenance cost (thousand €)")
-plt.title("Expected monthly maintenance cost vs τ (Monte Carlo penalty)")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+print("\n--- Task D (Monte Carlo-based) ---")
+print(f"Optimal inspection interval tau* (Monte Carlo) = {tau_star_mc:.1f} days")
+print(f"Expected monthly cost at tau* = {min_cost_mc:.2f} thousand euros")
 
-# Optional diagnostic: plot penalty probability vs τ
+## Plot penalty probability vs tau for diagnostics
 plt.figure(figsize=(10,5))
 plt.plot(tau_values, penalty_probs, marker='o', linewidth=1)
 plt.xlabel("Inspection interval τ (days)")
@@ -244,5 +306,54 @@ plt.title("Penalty probability per inspection cycle vs τ (Monte Carlo)")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+
+# Plot all three approaches to task d in monthly costs vs tau
+plt.figure(figsize=(12,6))
+
+## Plot theory-based expected monthly cost
+plt.plot(tau_values, monthly_costs_theory, marker='o', linestyle='-', color='blue', label='Theory-based')
+
+## Plot data-driven expected monthly cost
+plt.plot(tau_values, monthly_costs_data, marker='x', linestyle='--', color='orange', label='Data-driven')
+
+## Plot Monte Carlo-based expected monthly cost
+plt.plot(tau_values, monthly_costs, marker='s', linestyle='-.', color='green', label='Monte Carlo-based')
+
+## Mark tau* for each method
+plt.axvline(x=tau_star_theory, color='blue', linestyle=':', label=f'Tau* theory ≈ {tau_star_theory:.1f} d')
+plt.axvline(x=tau_star_data, color='orange', linestyle=':', label=f'Tau* data ≈ {tau_star_data:.1f} d')
+plt.axvline(x=tau_star_mc, color='green', linestyle=':', label=f'Tau* Monte Carlo ≈ {tau_star_mc:.1f} d')
+
+## Labels, title, legend
+plt.xlabel("Inspection interval τ (days)")
+plt.ylabel("Expected monthly maintenance cost (thousand €)")
+plt.title("Expected monthly maintenance cost vs inspection interval (all methods)")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Plot theory-based and monte carlo in monthly costs vs tau
+plt.figure(figsize=(12,6))
+
+# Plot theory-based expected monthly cost
+plt.plot(tau_values, monthly_costs_theory, marker='o', linestyle='-', color='blue', label='Theory-based')
+
+# Plot Monte Carlo-based expected monthly cost
+plt.plot(tau_values, monthly_costs, marker='s', linestyle='-.', color='green', label='Monte Carlo-based')
+
+# Mark tau* for each method
+plt.axvline(x=tau_star_theory, color='blue', linestyle=':', label=f'Tau* theory ≈ {tau_star_theory:.1f} d')
+plt.axvline(x=tau_star_mc, color='green', linestyle=':', label=f'Tau* Monte Carlo ≈ {tau_star_mc:.1f} d')
+
+# Labels, title, legend
+plt.xlabel("Inspection interval τ (days)")
+plt.ylabel("Expected monthly maintenance cost (thousand €)")
+plt.title("Expected monthly maintenance cost vs inspection interval")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
 
 
