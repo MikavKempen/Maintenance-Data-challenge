@@ -158,3 +158,91 @@ plt.title("Expected monthly maintenance cost vs inspection interval")
 plt.legend()
 plt.grid(True)
 plt.show()
+
+
+
+#d with taking r into account
+# ===== Task (d): Optimal τ using Monte Carlo penalty probability (no linear approx) =====
+
+# Search grid for inspection interval τ (respect "at least twice/year" → τ ≤ 182 days)
+tau_values = np.arange(5, int(365/2) + 1, 1)
+
+# Expected repair cost per damage (from Task b)
+E_repair_per_damage = p_moderate * c_moderate + p_major * c_major
+
+# Monte Carlo settings
+n_mc = 2000                              # number of simulated cycles per τ (increase for smoother results)
+rng = np.random.default_rng(42)           # reproducible random generator
+
+# Severity categories (values) and their probabilities (from Task b)
+severity_values = np.array([0.1, 1.0, 10.0])
+severity_probs  = np.array([p_minor, p_moderate, p_major])
+
+def estimate_penalty_prob_tau(tau, n_mc=20000):
+    """
+    Estimate P(sum of severities in a τ-day cycle > penalty_threshold)
+    for the compound Poisson model:
+      N(τ) ~ Poisson(lambda_hat * τ), severities i.i.d. in {0.1, 1, 10}.
+    """
+    lam_tau = lambda_hat * tau
+    # Draw number of damages per cycle for all simulations
+    Ns = rng.poisson(lam_tau, size=n_mc)
+
+    exceed = 0
+    for N in Ns:
+        if N == 0:
+            continue  # no damages → sum = 0 → cannot exceed
+        # Draw N severities for this simulated cycle
+        sev = rng.choice(severity_values, size=N, p=severity_probs)
+        if sev.sum() > penalty_threshold:
+            exceed += 1
+    return exceed / n_mc
+
+# Compute expected monthly cost for each τ
+monthly_costs = []
+penalty_probs = []  # store Monte Carlo Pτ for diagnostics/plotting
+for tau in tau_values:
+    # Expected repair cost per cycle (analytical)
+    c_rep_tau = (lambda_hat * tau) * E_repair_per_damage
+
+    # Penalty probability per cycle via Monte Carlo
+    p_penalty_tau = estimate_penalty_prob_tau(tau, n_mc=n_mc)
+    penalty_probs.append(p_penalty_tau)
+    c_fine_tau = penalty * p_penalty_tau
+
+    # Expected cycle cost and monthly cost (30-day month for reporting)
+    ecc_tau = c_i + c_rep_tau + c_fine_tau
+    g_tau = ecc_tau / tau * 30
+    monthly_costs.append(g_tau)
+
+# Find τ* that minimizes the expected monthly cost
+min_index = np.argmin(monthly_costs)
+tau_star = tau_values[min_index]
+min_cost = monthly_costs[min_index]
+
+print(f"Optimal inspection interval tau* = {tau_star:.1f} days")
+print(f"Expected monthly cost at tau* = {min_cost:.2f} thousand euros")
+
+# Plot: Expected monthly cost vs τ (Monte Carlo only)
+plt.figure(figsize=(10,5))
+plt.plot(tau_values, monthly_costs, marker='o', linewidth=1, label="Cost (MC penalty)")
+plt.axvline(x=tau_star, color='r', linestyle='--', label=f"tau* = {tau_star:.1f} d")
+plt.xlabel("Inspection interval τ (days)")
+plt.ylabel("Expected monthly maintenance cost (thousand €)")
+plt.title("Expected monthly maintenance cost vs τ (Monte Carlo penalty)")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Optional diagnostic: plot penalty probability vs τ
+plt.figure(figsize=(10,5))
+plt.plot(tau_values, penalty_probs, marker='o', linewidth=1)
+plt.xlabel("Inspection interval τ (days)")
+plt.ylabel("Penalty probability per cycle, P(Sum severity > 20)")
+plt.title("Penalty probability per inspection cycle vs τ (Monte Carlo)")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+
