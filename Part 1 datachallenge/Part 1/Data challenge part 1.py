@@ -40,6 +40,7 @@ plt.xticks(rotation=45)
 plt.ylabel("Number of Damages")
 plt.title("Number of Damages per Month-Year")
 plt.tight_layout()
+plt.savefig(os.path.join(script_dir, "taskA_damages_per_year.png"))
 plt.show()
 
 ## Average monthly damages
@@ -100,6 +101,7 @@ plt.ylabel("Total Severity Score")
 plt.title("Monthly Total Severity vs Safety Threshold")
 plt.legend()
 plt.tight_layout()
+plt.savefig(os.path.join(script_dir, "taskC_monthly_total_severity.png"))
 plt.show()
 
 ## Data-driven penalty probability
@@ -305,6 +307,7 @@ plt.ylabel("Penalty probability per cycle, P(Sum severity > 20)")
 plt.title("Penalty probability per inspection cycle vs τ (Monte Carlo)")
 plt.grid(True)
 plt.tight_layout()
+plt.savefig(os.path.join(script_dir, "taskD_penalty_probability.png"))
 plt.show()
 
 # Plot all three approaches to task d in monthly costs vs tau
@@ -331,6 +334,7 @@ plt.title("Expected monthly maintenance cost vs inspection interval (all methods
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
+plt.savefig(os.path.join(script_dir, "taskD_3_methods_monthly_cost.png"))
 plt.show()
 
 # Plot theory-based and monte carlo in monthly costs vs tau
@@ -353,6 +357,7 @@ plt.title("Expected monthly maintenance cost vs inspection interval")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
+plt.savefig(os.path.join(script_dir, "taskD_theory_mc_monthly_cost.png"))
 plt.show()
 
 
