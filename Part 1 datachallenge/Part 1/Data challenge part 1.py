@@ -242,7 +242,7 @@ print(f"Expected monthly cost at tau* = {min_cost_theory:.2f} thousand euros")
 
 # task d with Monte Carlo penalty probability
 ## Monte Carlo settings
-n_mc = 2000                              # number of simulated cycles per τ (increase for smoother results)
+n_mc = 50000                              # number of simulated cycles per τ (increase for smoother results)
 rng = np.random.default_rng(42)           # reproducible random generator
 
 ## Severity categories (values) and their probabilities (in arrays for ease)
