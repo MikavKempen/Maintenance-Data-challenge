@@ -327,7 +327,7 @@ data_test_norm, _, _  = normalize_fft_dataset(data_test_fft,  mean=train_mean, s
 ### Applying PCA
 
 #### Running PCA and choosing k
-pca_full, cum_explained = analyze_pca_variance(data_train_norm, max_components=None, verbose=True, save_path='pca_cumulative_variance.png')
+#pca_full, cum_explained = analyze_pca_variance(data_train_norm, max_components=None, verbose=True, save_path='pca_cumulative_variance.png')
 chosen_k_elbow = 25   # <-- set this from the elbow in the plotted curve
 chosen_k_auto = np.argmax(cum_explained >= 95) + 1  # Automatically choose 95% threshold
 
