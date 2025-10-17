@@ -6,8 +6,6 @@ from scipy.fft import fft, fftfreq
 import os
 from sklearn.decomposition import PCA
 
-
-
 # Task a
 
 ## FUNCTIONS
@@ -297,36 +295,6 @@ def print_pca_summary(pca_model, n_components=10):
     for i, var in enumerate(pca_model.explained_variance_ratio_[:n_components]):
         print(f"  PC{i+1:02d}: {var*100:.2f}% variance")
 
-def plot_pca_results(pca_train, data_keys, title="PCA Results", save_path=None):
-
-    ### Extracting labels (h = 0 for normal, 1 for fault)
-    labels = [key[1] for key in data_keys]
-
-    ### Converting to numpy arrays for indexing
-    pca_train = np.array(pca_train)
-    labels = np.array(labels)
-
-    ### Separating normal and fault
-    normal_mask = labels == 0
-    fault_mask = labels == 1
-
-    plt.figure(figsize=(10, 8))
-    plt.scatter(pca_train[normal_mask, 0], pca_train[normal_mask, 1],
-                color='green', alpha=0.6, label='Normal (h=0)')
-    plt.scatter(pca_train[fault_mask, 0], pca_train[fault_mask, 1],
-                color='red', alpha=0.6, label='Fault (h=1)')
-
-    plt.title(title)
-    plt.xlabel('Principal Component 1')
-    plt.ylabel('Principal Component 2')
-    plt.legend()
-    plt.grid(True)
-
-    if save_path:
-        plt.savefig(save_path, dpi=300)
-
-    plt.show()
-
 ## EXECUTION
 
 ### Choosing the experiment we want to look at
@@ -363,14 +331,14 @@ pca_full, cum_explained = analyze_pca_variance(data_train_norm, max_components=N
 chosen_k_elbow = 25   # <-- set this from the elbow in the plotted curve
 chosen_k_auto = np.argmax(cum_explained >= 95) + 1  # Automatically choose 95% threshold
 
-pca_results = apply_pca(data_train_norm, data_valid_norm, data_test_norm, n_components=chosen_k)
+pca_results_elbow = apply_pca(data_train_norm, data_valid_norm, data_test_norm, n_components=chosen_k_elbow)
+pca_results_auto = apply_pca(data_train_norm, data_valid_norm, data_test_norm, n_components=chosen_k_auto)
 
 #### Printing PCA summary
-print_pca_summary(pca_results["pca_model"])
+print("------------- PCA Elbow results -------------")
+print_pca_summary(pca_results_elbow["pca_model"])
+print("------------- PCA Auto results -------------")
+print_pca_summary(pca_results_auto["pca_model"])
 
-#### Plotting PCA
-plot_pca_results(pca_results["train"][0],
-                 data_keys=pca_results["train"][2],
-                 title="PCA Projection of Training Data",
-                 save_path="pca_train_projection.png")
+
 
