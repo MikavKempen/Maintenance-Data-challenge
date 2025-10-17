@@ -230,6 +230,115 @@ print(f"Mean increment m: {m:.8f}")
 print(f"Var  increment v: {v:.8f}")
 print(f"(a) MoM estimates: alpha = {alp:.4f}, beta = {bet:.6f}")
 
+# =====================================================================
+# Task (d): East area — clean like West, then RUL via Monte Carlo (95% CI)
+# =====================================================================
+
+# 0) Normalize any weird tuple column names (safe no-op)
+df_east.columns = [''.join(c) if isinstance(c, tuple) else c for c in df_east.columns]
+
+# 1) Identify columns
+day_col_e = df_east.columns[0]
+panel_cols_e = df_east.columns[1:]
+
+# 2) Coerce to numeric
+east_clean = df_east.copy()
+for col in panel_cols_e:
+    east_clean[col] = pd.to_numeric(east_clean[col], errors='coerce')
+
+# 3) Remove out-of-bounds and exact zeros -> NaN
+mask_oob_e = (east_clean[panel_cols_e] < 0) | (east_clean[panel_cols_e] > 1)
+mask_zero_e = (east_clean[panel_cols_e] == 0.0)
+east_clean.loc[:, panel_cols_e] = east_clean[panel_cols_e].mask(mask_oob_e | mask_zero_e)
+
+# 4) Sort by day and interpolate NaNs; clip to [0,1]
+east_clean[day_col_e] = pd.to_numeric(east_clean[day_col_e], errors='coerce')
+east_clean = east_clean.sort_values(by=day_col_e).reset_index(drop=True)
+
+east_interp = east_clean.copy()
+east_interp[panel_cols_e] = east_interp[panel_cols_e].apply(
+    lambda s: s.interpolate(method='linear', limit_direction='both')
+)
+east_interp[panel_cols_e] = east_interp[panel_cols_e].clip(lower=0.0, upper=1.0)
+
+# (Optional) quick plot
+plt.figure(figsize=(9,3.6))
+for c in panel_cols_e:
+    plt.plot(east_interp[day_col_e], east_interp[c], lw=1)
+plt.axhline(0.8, ls='--', label='Turn-off threshold')
+plt.title('East area: cleaned/interpolated efficiencies (last month)')
+plt.xlabel('Day'); plt.ylabel('Efficiency'); plt.ylim(0,1.05); plt.legend(); plt.tight_layout(); plt.show()
+
+# ------------------------------------------------------------
+# Gamma parameters for simulation: use West estimates (alp, bet)
+# ------------------------------------------------------------
+print(f"Using West-fitted Gamma parameters for simulation: alpha={alp:.4f}, beta={bet:.6f}")
+
+# ------------------------------------------------------------
+# Monte Carlo RUL simulation helper
+# ------------------------------------------------------------
+def simulate_rul_days(y_gap, alpha, beta, nsim=50000, max_days=365):
+    """
+    Simulate RUL (in whole days) until cumulative Gamma increments exceed y_gap.
+    Returns an array of length nsim with integer day counts (1..max_days).
+    """
+    if y_gap <= 0:
+        return np.zeros(nsim, dtype=int)  # already at/below threshold
+
+    # Draw daily increments (nsim x max_days), Gamma(shape=alpha, scale=beta)
+    incs = np.random.gamma(shape=alpha, scale=beta, size=(nsim, max_days))
+    cums = np.cumsum(incs, axis=1)
+    hits = (cums >= y_gap)
+
+    # first hit day: argmax gives first True index; handle rows with no hit
+    first_idx = hits.argmax(axis=1)  # 0-based
+    no_hit = ~hits.any(axis=1)
+    first_idx[no_hit] = max_days - 1
+
+    # Convert to whole days
+    return first_idx + 1  # days are 1..max_days
+
+# ------------------------------------------------------------
+# Compute per-panel current gap and simulate RUL distribution
+# ------------------------------------------------------------
+results = []
+for c in panel_cols_e:
+    e_now = float(east_interp[c].iloc[-1])
+    y_gap = max(0.0, e_now - 0.8)  # remaining efficiency drop to threshold
+    samples = simulate_rul_days(y_gap, alp, bet, nsim=50000, max_days=365)
+
+    # Summary stats in WHOLE DAYS
+    mean_days = float(np.mean(samples))
+    q2p5 = int(np.floor(np.quantile(samples, 0.025)))
+    q97p5 = int(np.ceil(np.quantile(samples, 0.975)))
+
+    results.append({
+        "Panel": c,
+        "eff_now": e_now,
+        "gap_to_0.8": y_gap,
+        "RUL_mean_days": int(round(mean_days)),
+        "RUL_95CI_low_day": q2p5,
+        "RUL_95CI_high_day": q97p5
+    })
+
+# Present table
+df_rul_east = pd.DataFrame(results).set_index("Panel").sort_index()
+print("\n--- East area RUL (Monte Carlo, 95% CI, days) ---")
+print(df_rul_east)
+
+# Optional: bar chart of mean RUL with error bars (± half CI width)
+plt.figure(figsize=(8,3.5))
+x_idx = np.arange(len(df_rul_east))
+means = df_rul_east["RUL_mean_days"].to_numpy()
+low = df_rul_east["RUL_95CI_low_day"].to_numpy()
+high = df_rul_east["RUL_95CI_high_day"].to_numpy()
+err = np.vstack([means - low, high - means])
+plt.errorbar(x_idx, means, yerr=err, fmt='o', capsize=4)
+plt.xticks(x_idx, df_rul_east.index, rotation=45)
+plt.ylabel('RUL (days)')
+plt.title('East area: RUL (mean ± 95% CI) from Monte Carlo')
+plt.tight_layout(); plt.show()
+
 
 #
 #
