@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.fft import fft, fftfreq
 import os
+from sklearn.decomposition import PCA
+
 
 
 # Task a
@@ -212,6 +214,119 @@ def plot_normalized_fft(norm_data_dict, fft_data_dict, key, save_path=None):
 
     plt.show()
 
+def dict_to_features_labels(norm_dict):
+    keys = sorted(norm_dict.keys())
+    X = np.vstack([norm_dict[k] for k in keys])
+    y = np.array([k[1] for k in keys])  # k[1] is the label (0 or 1)
+    return X, y, keys
+
+def apply_pca(train_dict, valid_dict, test_dict, n_components=0.95, verbose=True):
+
+    ### Converting dicts to feature matrices
+    if verbose: print("Converting training data to feature matrix...")
+    X_train, y_train, train_keys = dict_to_features_labels(train_dict)
+    X_valid, y_valid, valid_keys = dict_to_features_labels(valid_dict)
+    X_test,  y_test,  test_keys  = dict_to_features_labels(test_dict)
+
+    ### Fitting PCA on training data
+    if verbose: print("Fitting PCA on training data...")
+    pca = PCA(n_components=n_components)
+    X_train_pca = pca.fit_transform(X_train)
+    if verbose:
+        print(f"PCA fitted. Original dims: {X_train.shape[1]}, Reduced dims: {X_train_pca.shape[1]}")
+
+    ### Transforming validation and test data
+    X_valid_pca = pca.transform(X_valid)
+    X_test_pca  = pca.transform(X_test)
+    if verbose:
+        print("Transformed validation and test datasets using trained PCA.")
+
+    ### Returning
+    return {
+        "pca_model": pca,
+        "train": (X_train_pca, y_train, train_keys),
+        "valid": (X_valid_pca, y_valid, valid_keys),
+        "test":  (X_test_pca,  y_test,  test_keys)
+    }
+
+def analyze_pca_variance(norm_dict, max_components=None, verbose=True, save_path=None):
+    X_train, y_train, train_keys = dict_to_features_labels(norm_dict)
+
+    # Determine maximum allowed components
+    max_possible = min(X_train.shape)
+    if max_components is None or max_components > max_possible:
+        max_components = max_possible
+        if verbose:
+            print(f"⚠️ max_components adjusted to {max_components} (min(n_samples, n_features))")
+
+    # Fit PCA with full range
+    pca_full = PCA(n_components=max_components)
+    pca_full.fit(X_train)
+
+    # Compute cumulative explained variance
+    cum_explained = np.cumsum(pca_full.explained_variance_ratio_) * 100
+
+    # Plot cumulative variance curve
+    plt.figure(figsize=(8, 6))
+    plt.plot(range(1, len(cum_explained) + 1), cum_explained, marker='o')
+    plt.xlabel('Number of Components')
+    plt.ylabel('Cumulative Explained Variance (%)')
+    plt.title('Cumulative Explained Variance vs. PCA Components')
+    plt.grid(True)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+    plt.show()
+
+    if verbose:
+        for i in [10, 20, 50, 100]:
+            if i < len(cum_explained):
+                print(f"Components {i:3d}: {cum_explained[i - 1]:6.2f}% variance explained")
+
+    return pca_full, cum_explained
+
+def print_pca_summary(pca_model, n_components=10):
+
+    total_var = np.sum(pca_model.explained_variance_ratio_) * 100
+    print(f"\n🔍 PCA Summary")
+    print(f"-----------------------------")
+    print(f"Total components: {pca_model.n_components_}")
+    print(f"Total variance explained: {total_var:.2f}%")
+
+    print(f"\nTop {n_components} components variance ratios:")
+    for i, var in enumerate(pca_model.explained_variance_ratio_[:n_components]):
+        print(f"  PC{i+1:02d}: {var*100:.2f}% variance")
+
+def plot_pca_results(pca_train, data_keys, title="PCA Results", save_path=None):
+
+    ### Extracting labels (h = 0 for normal, 1 for fault)
+    labels = [key[1] for key in data_keys]
+
+    ### Converting to numpy arrays for indexing
+    pca_train = np.array(pca_train)
+    labels = np.array(labels)
+
+    ### Separating normal and fault
+    normal_mask = labels == 0
+    fault_mask = labels == 1
+
+    plt.figure(figsize=(10, 8))
+    plt.scatter(pca_train[normal_mask, 0], pca_train[normal_mask, 1],
+                color='green', alpha=0.6, label='Normal (h=0)')
+    plt.scatter(pca_train[fault_mask, 0], pca_train[fault_mask, 1],
+                color='red', alpha=0.6, label='Fault (h=1)')
+
+    plt.title(title)
+    plt.xlabel('Principal Component 1')
+    plt.ylabel('Principal Component 2')
+    plt.legend()
+    plt.grid(True)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+
+    plt.show()
+
 ## EXECUTION
 
 ### Choosing the experiment we want to look at
@@ -226,7 +341,7 @@ data_valid_raw = read_raw_data('data_gear/valid/')
 data_test_raw  = read_raw_data('data_gear/test/')
 
 ### Getting the three plots of the raw data
-plot_raw_data(data_train_raw, experiment_key, save_path=save_raw_path)
+#plot_raw_data(data_train_raw, experiment_key, save_path=save_raw_path)
 
 ### Applying FFT to all raw data
 data_train_fft = apply_fft_to_dataset(data_train_raw)
@@ -239,4 +354,23 @@ data_valid_norm, _, _ = normalize_fft_dataset(data_valid_fft, mean=train_mean, s
 data_test_norm, _, _  = normalize_fft_dataset(data_test_fft,  mean=train_mean, std=train_std)
 
 ### Getting the three plots of the normalized data
-plot_normalized_fft(data_train_norm, data_train_fft, experiment_key, save_path=save_fft_path)
+#plot_normalized_fft(data_train_norm, data_train_fft, experiment_key, save_path=save_fft_path)
+
+### Applying PCA
+
+#### Running PCA and choosing k
+pca_full, cum_explained = analyze_pca_variance(data_train_norm, max_components=None, verbose=True, save_path='pca_cumulative_variance.png')
+chosen_k_elbow = 25   # <-- set this from the elbow in the plotted curve
+chosen_k_auto = np.argmax(cum_explained >= 95) + 1  # Automatically choose 95% threshold
+
+pca_results = apply_pca(data_train_norm, data_valid_norm, data_test_norm, n_components=chosen_k)
+
+#### Printing PCA summary
+print_pca_summary(pca_results["pca_model"])
+
+#### Plotting PCA
+plot_pca_results(pca_results["train"][0],
+                 data_keys=pca_results["train"][2],
+                 title="PCA Projection of Training Data",
+                 save_path="pca_train_projection.png")
+
