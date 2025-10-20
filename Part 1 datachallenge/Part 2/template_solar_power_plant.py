@@ -340,49 +340,64 @@ plt.title('East area: RUL (mean ± 95% CI) from Monte Carlo')
 plt.tight_layout(); plt.show()
 
 
-#
-#
-# # -------------------------
-# # Task (d)
-# # -------------------------
-# # RUL estimation
-# RUL = []
-# # YOUR CODE HERE
-# print(f"(b) RUL of East area: {RUL}")
-#
-# # -------------------------
-# # Task (e)
-# # -------------------------
-# # Read Data
-# df_cost = pd.read_csv('data_solar_power_plant/cost_cleaning.csv')
-# print(df_cost)
-# df_rul = pd.read_csv('data_solar_power_plant/RUL_North.csv')
-# print(df_rul)
-#
-# # Parameters
-# C_P = df_cost['C_P, power price'].to_numpy()
-# C_D = df_cost['C_D, daily charge'].to_numpy()
-# C_U = df_cost['C_U, unit charge'].to_numpy()
-# RUL_i = df_rul['RUL (days)'].to_numpy()
-# max_clean = 3 # Max number of cleaning in a day
-# I = RUL_i.size
-# T = df_cost.shape[0]
-#
-# # Create a new model
-# m = grb.Model()
-#
-# # Create variables
-# # YOUR CODE HERE
-#
-# # Set objective function
-# f = 0 # YOUR CODE HERE
-# m.setObjective(f, grb.GRB.MINIMIZE)
-#
-# # Add constraints
-# # YOUR CODE HERE
-#
-# # Solve it!
-# m.optimize()
-# # YOUR CODE HERE
-#
-# print(f"(f) Optimal objective value: {m.objVal:.2f}")
+# -------------------------
+# Quick Gamma fit on East (for comparison only)
+# -------------------------
+# Uses same steps as West: enforce non-increasing per SPU -> degradation -> daily increments -> MoM
+
+# 1) Take only panel columns and ensure float
+panel_cols_e = [c for c in east_interp.columns if c != day_col_e]
+eff_east_fit = east_interp[panel_cols_e].astype(float)
+
+# 2) Enforce non-increasing efficiency per SPU (noise guard, consistent with West)
+eff_east_mono = eff_east_fit.copy()
+for c in panel_cols_e:
+    eff_east_mono[c] = np.minimum.accumulate(eff_east_mono[c].to_numpy())
+
+# 3) Efficiency -> degradation, then daily increments
+deg_east = 1.0 - eff_east_mono
+ddeg_east = deg_east.diff().iloc[1:, :]  # drop first row (NaNs)
+
+# 4) Pool strictly positive daily increments
+x_e = ddeg_east.to_numpy().ravel()
+x_e = x_e[np.isfinite(x_e)]
+x_e = x_e[x_e > 0]
+
+# 5) Method of Moments on East
+if x_e.size == 0:
+    print("East fit: no positive increments found (cannot estimate).")
+    alp_e = np.nan; bet_e = np.nan; m_e = np.nan; v_e = np.nan
+else:
+    m_e = x_e.mean()
+    v_e = x_e.var(ddof=0)
+    if (v_e <= 0) or (not np.isfinite(v_e)) or (not np.isfinite(m_e)) or (m_e <= 0):
+        alp_e = 1.0
+        bet_e = m_e if (m_e > 0 and np.isfinite(m_e)) else 1.0
+    else:
+        alp_e = (m_e * m_e) / v_e
+        bet_e = v_e / m_e
+
+    print("---- Quick Gamma parameter estimation (East) ----")
+    print(f"Number of increments considered: {x_e.size}")
+    print(f"Mean increment m_e: {m_e:.8f}")
+    print(f"Var  increment v_e: {v_e:.8f}")
+    print(f"(East) MoM estimates: alpha_e = {alp_e:.4f}, beta_e = {bet_e:.6f}")
+
+    # 6) Simple comparison to West
+    m_w = alp * bet
+    print("---- East vs West (increment-level) ----")
+    if np.isfinite(m_w) and m_w > 0:
+        print(f"Mean increment ratio (East/West): {m_e / m_w:.3f}")
+    else:
+        print("Cannot compute mean ratio: invalid West mean.")
+
+    # Percent differences (guarding NaNs)
+    def pct_diff(a, b):
+        return np.nan if not (np.isfinite(a) and np.isfinite(b) and b != 0) else 100.0 * (a - b) / b
+
+    print(f"alpha: East={alp_e:.4f}, West={alp:.4f}, Δ%={pct_diff(alp_e, alp):.1f}%")
+    print(f"beta:  East={bet_e:.6f}, West={bet:.6f}, Δ%={pct_diff(bet_e, bet):.1f}%")
+
+    # Quick caution if sample is small
+    if x_e.size < 100:
+        print("Note: East sample of daily increments is small; MoM estimates may be unstable.")
